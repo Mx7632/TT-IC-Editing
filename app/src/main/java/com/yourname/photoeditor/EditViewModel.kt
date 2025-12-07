@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.InputStream
+import kotlin.math.roundToInt
 
 class EditViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -51,6 +52,31 @@ class EditViewModel(application: Application) : AndroidViewModel(application) {
             } catch (e: Exception) {
                 Log.e("EditViewModel", "Error loading image: ${e.message}")
                 e.printStackTrace()
+            }
+        }
+    }
+    
+    fun updateBitmap(newBitmap: Bitmap) {
+        _bitmap.value = newBitmap
+    }
+    
+    // Crop the current bitmap based on the provided rect (in pixel coordinates of the current bitmap)
+    fun cropBitmap(x: Int, y: Int, width: Int, height: Int) {
+        val currentBitmap = _bitmap.value ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                // Ensure coordinates are within bounds
+                val safeX = x.coerceIn(0, currentBitmap.width)
+                val safeY = y.coerceIn(0, currentBitmap.height)
+                val safeWidth = width.coerceAtMost(currentBitmap.width - safeX)
+                val safeHeight = height.coerceAtMost(currentBitmap.height - safeY)
+                
+                if (safeWidth <= 0 || safeHeight <= 0) return@launch
+
+                val croppedBitmap = Bitmap.createBitmap(currentBitmap, safeX, safeY, safeWidth, safeHeight)
+                _bitmap.value = croppedBitmap
+            } catch (e: Exception) {
+                Log.e("EditViewModel", "Error cropping image: ${e.message}")
             }
         }
     }
