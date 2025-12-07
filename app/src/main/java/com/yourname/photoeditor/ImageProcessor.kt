@@ -152,14 +152,15 @@ object ImageProcessor {
 
         return newBitmap
     }
-}
 
-enum class FilterType(val displayName: String) {
-    Original("原图"),
-    Grayscale("黑白"),
-    Sepia("复古"),
-    Warm("暖色"),
-    Cool("冷色"),
-    Invert("反色"),
-    Polaroid("胶片")
+    enum class FilterType(val displayName: String) {
+        Original("原图"),
+        Grayscale("黑白"),
+        Sepia("复古"),
+        Warm("暖色"),
+        Cool("冷色"),
+        Invert("反色"),
+        Polaroid("胶片")
+    }
+}
 
