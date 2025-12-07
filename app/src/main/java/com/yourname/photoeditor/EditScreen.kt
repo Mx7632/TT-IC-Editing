@@ -742,6 +742,10 @@ fun CropContainer(
     }
 }
 
+private enum class CropHandle {
+    TopLeft, TopRight, BottomLeft, BottomRight, Center, None
+}
+
 @Composable
 fun CropOverlay(
     rect: Rect,
@@ -749,54 +753,90 @@ fun CropOverlay(
     aspectRatio: Float?,
     onRectChange: (Rect) -> Unit
 ) {
+    var activeHandle by remember { mutableStateOf(CropHandle.None) }
+    val currentRect by rememberUpdatedState(rect)
+
     Canvas(
         modifier = Modifier
             .fillMaxSize()
             .pointerInput(imageBounds, aspectRatio) {
                 detectDragGestures(
+                    onDragStart = { offset ->
+                        val r = currentRect
+                        val left = r.left
+                        val top = r.top
+                        val right = r.right
+                        val bottom = r.bottom
+                        val threshold = 100f
+
+                        val distTL = (offset - Offset(left, top)).getDistance()
+                        val distTR = (offset - Offset(right, top)).getDistance()
+                        val distBL = (offset - Offset(left, bottom)).getDistance()
+                        val distBR = (offset - Offset(right, bottom)).getDistance()
+
+                        activeHandle = when {
+                            distTL < threshold -> CropHandle.TopLeft
+                            distTR < threshold -> CropHandle.TopRight
+                            distBL < threshold -> CropHandle.BottomLeft
+                            distBR < threshold -> CropHandle.BottomRight
+                            r.contains(offset) -> CropHandle.Center
+                            else -> CropHandle.None
+                        }
+                    },
+                    onDragEnd = { activeHandle = CropHandle.None },
+                    onDragCancel = { activeHandle = CropHandle.None },
                     onDrag = { change, dragAmount ->
                         change.consume()
-                        val left = rect.left
-                        val top = rect.top
-                        val right = rect.right
-                        val bottom = rect.bottom
-                        val distTL = (change.position - Offset(left, top)).getDistance()
-                        val distTR = (change.position - Offset(right, top)).getDistance()
-                        val distBL = (change.position - Offset(left, bottom)).getDistance()
-                        val distBR = (change.position - Offset(right, bottom)).getDistance()
-                        val threshold = 100f
-                        var newLeft = left
-                        var newTop = top
-                        var newRight = right
-                        var newBottom = bottom
+                        if (activeHandle == CropHandle.None) return@detectDragGestures
 
-                        if (distTL < threshold) {
-                            newLeft += dragAmount.x
-                            newTop += dragAmount.y
-                        } else if (distTR < threshold) {
-                            newRight += dragAmount.x
-                            newTop += dragAmount.y
-                        } else if (distBL < threshold) {
-                            newLeft += dragAmount.x
-                            newBottom += dragAmount.y
-                        } else if (distBR < threshold) {
-                            newRight += dragAmount.x
-                            newBottom += dragAmount.y
-                        } else {
-                            newLeft += dragAmount.x
-                            newRight += dragAmount.x
-                            newTop += dragAmount.y
-                            newBottom += dragAmount.y
+                        val r = currentRect
+                        var newLeft = r.left
+                        var newTop = r.top
+                        var newRight = r.right
+                        var newBottom = r.bottom
+
+                        when (activeHandle) {
+                            CropHandle.TopLeft -> {
+                                newLeft += dragAmount.x
+                                newTop += dragAmount.y
+                            }
+                            CropHandle.TopRight -> {
+                                newRight += dragAmount.x
+                                newTop += dragAmount.y
+                            }
+                            CropHandle.BottomLeft -> {
+                                newLeft += dragAmount.x
+                                newBottom += dragAmount.y
+                            }
+                            CropHandle.BottomRight -> {
+                                newRight += dragAmount.x
+                                newBottom += dragAmount.y
+                            }
+                            CropHandle.Center -> {
+                                newLeft += dragAmount.x
+                                newRight += dragAmount.x
+                                newTop += dragAmount.y
+                                newBottom += dragAmount.y
+                            }
+                            else -> {}
                         }
 
-                        // Constraints
-                        newLeft = newLeft.coerceIn(imageBounds.left, newRight - 50f)
-                        newTop = newTop.coerceIn(imageBounds.top, newBottom - 50f)
-                        newRight = newRight.coerceIn(newLeft + 50f, imageBounds.right)
-                        newBottom = newBottom.coerceIn(newTop + 50f, imageBounds.bottom)
+                        if (activeHandle == CropHandle.Center) {
+                            val width = r.width
+                            val height = r.height
+                            newLeft = newLeft.coerceIn(imageBounds.left, imageBounds.right - width)
+                            newTop = newTop.coerceIn(imageBounds.top, imageBounds.bottom - height)
+                            newRight = newLeft + width
+                            newBottom = newTop + height
+                        } else {
+                            newLeft = newLeft.coerceIn(imageBounds.left, newRight - 50f)
+                            newTop = newTop.coerceIn(imageBounds.top, newBottom - 50f)
+                            newRight = newRight.coerceIn(newLeft + 50f, imageBounds.right)
+                            newBottom = newBottom.coerceIn(newTop + 50f, imageBounds.bottom)
+                        }
 
                         var newRect = Rect(newLeft, newTop, newRight, newBottom)
-                        if (aspectRatio != null) {
+                        if (aspectRatio != null && activeHandle != CropHandle.Center) {
                             newRect = fitAspectRatio(newRect, imageBounds, aspectRatio)
                         }
                         onRectChange(newRect)
