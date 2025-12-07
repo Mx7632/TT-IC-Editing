@@ -347,6 +347,7 @@ fun TextLayerItem(
     onEdit: () -> Unit
 ) {
     val density = LocalDensity.current
+    var textSize by remember { mutableStateOf(IntSize.Zero) }
     
     // Convert bitmap coords to screen coords (relative to image box)
     val x = layer.position.x * fitScale
@@ -354,19 +355,16 @@ fun TextLayerItem(
     
     val fontSizeSp = with(density) { (layer.fontSize * fitScale).toSp() }
     
-    // Gestures
-    // We need to map screen delta back to bitmap delta: delta / fitScale
-    
     Box(
         modifier = Modifier
             .offset(
                 x = with(density) { x.toDp() },
                 y = with(density) { y.toDp() }
             )
-            // Center the text on the point
+            // Center the text based on actual measured size
             .offset(
-                x = with(density) { -(layer.fontSize * layer.text.length * 0.3f).dp }, // Rough estimate for centering
-                y = with(density) { -(layer.fontSize * 0.6f).dp }
+                x = with(density) { -(textSize.width / 2).toDp() }, 
+                y = with(density) { -(textSize.height / 2).toDp() }
             )
             .graphicsLayer(
                 rotationZ = layer.rotation,
@@ -375,34 +373,23 @@ fun TextLayerItem(
                 alpha = layer.alpha
             )
             .pointerInput(isSelected) {
-                if (isSelected) {
-                    detectTransformGestures { _, pan, zoom, rotation ->
-                        onUpdate {
-                            it.scale *= zoom
-                            it.rotation += rotation
-                            // Apply pan (drag) during transform as well if needed, 
-                            // but usually drag is separate. 
-                            // However, detectTransformGestures consumes pan events too.
-                            // So we should handle dragging here if selected.
-                            val dx = pan.x / fitScale
-                            val dy = pan.y / fitScale
-                            it.position += Offset(dx, dy)
-                        }
+                detectTransformGestures { _, pan, zoom, rotation ->
+                    if (!isSelected) onSelect()
+                    onUpdate {
+                        // Update fontSize instead of scale for better UX consistency
+                        it.fontSize *= zoom
+                        it.fontSize = it.fontSize.coerceIn(10f, 500f)
+                        
+                        // Normalize rotation to 0-360
+                        it.rotation += rotation
+                        it.rotation = (it.rotation % 360 + 360) % 360
+                        
+                        // Apply pan (drag) during transform
+                        val dx = pan.x / fitScale
+                        val dy = pan.y / fitScale
+                        it.position += Offset(dx, dy)
                     }
                 }
-            }
-            .pointerInput(Unit) {
-                detectDragGestures(
-                    onDragStart = { onSelect() },
-                    onDrag = { change, dragAmount ->
-                        change.consume()
-                        val dx = dragAmount.x / fitScale
-                        val dy = dragAmount.y / fitScale
-                        onUpdate {
-                            it.position += Offset(dx, dy)
-                        }
-                    }
-                )
             }
             .pointerInput(Unit) {
                 detectTapGestures(
@@ -419,6 +406,7 @@ fun TextLayerItem(
                 fontWeight = FontWeight.Normal,
                 fontFamily = getFontFamily(layer.fontFamilyIndex)
             ),
+            onTextLayout = { textSize = it.size },
             modifier = Modifier
                 .then(
                     if (isSelected) Modifier.border(1.dp, Color.White, RoundedCornerShape(4.dp)).padding(4.dp)
