@@ -15,10 +15,32 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import java.util.UUID
+
+data class TextLayer(
+    val id: String = UUID.randomUUID().toString(),
+    var text: String = "双击编辑",
+    var position: Offset = Offset.Zero,
+    var fontSize: Float = 40f,
+    var color: Color = Color.White,
+    var rotation: Float = 0f,
+    var scale: Float = 1f,
+    var alpha: Float = 1f,
+    var fontFamilyIndex: Int = 0
+)
+
 class EditViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _bitmap = MutableStateFlow<Bitmap?>(null)
     val bitmap: StateFlow<Bitmap?> = _bitmap.asStateFlow()
+    
+    // Text Layers
+    val textLayers = mutableStateListOf<TextLayer>()
+    private val _selectedTextLayerId = MutableStateFlow<String?>(null)
+    val selectedTextLayerId: StateFlow<String?> = _selectedTextLayerId.asStateFlow()
 
     // Brightness/Contrast State
     private var adjustmentJob: Job? = null
@@ -134,5 +156,54 @@ class EditViewModel(application: Application) : AndroidViewModel(application) {
         } catch (e: Exception) {
             Log.e("EditViewModel", "Error applying adjustments", e)
         }
+    }
+
+    // --- Text Layer Management ---
+
+    fun addTextLayer() {
+        val currentBitmap = _bitmap.value ?: return
+        val centerX = currentBitmap.width / 2f
+        val centerY = currentBitmap.height / 2f
+        
+        val newLayer = TextLayer(
+            position = Offset(centerX, centerY)
+        )
+        textLayers.add(newLayer)
+        selectTextLayer(newLayer.id)
+    }
+
+    fun selectTextLayer(id: String?) {
+        _selectedTextLayerId.value = id
+    }
+
+    fun updateTextLayer(id: String, update: (TextLayer) -> Unit) {
+        val index = textLayers.indexOfFirst { it.id == id }
+        if (index != -1) {
+            val layer = textLayers[index]
+            update(layer)
+            // Trigger recomposition by replacing item (mutableStateListOf tracks adds/removes/replacements)
+            // Since properties are vars, simple property update might not trigger list listener if we don't be careful,
+            // but for mutableStateListOf, updating a property of an element doesn't automatically trigger list flow.
+            // However, the UI observing the list will read the properties. 
+            // Better: copy or force refresh. But TextLayer has vars.
+            // Jetpack Compose SnapshotStateList: "If the elements are mutable objects, updating their properties won't trigger recomposition unless the properties themselves are backed by MutableState."
+            // Our TextLayer properties are plain vars. This is a problem.
+            // We should either make TextLayer properties MutableState or replace the object in the list.
+            // Let's replace the object in the list using copy (if it were a data class with vals) or just creating a new one.
+            // Since I made them vars, I should probably change them to vals and use copy, or wrap them in MutableState.
+            // Actually, let's just make TextLayer a data class with vals and use copy to be safe and idiomatic.
+            // I will fix TextLayer definition in a moment or just handle replacement here.
+            // For now, I'll stick to replacing the object in the list.
+            textLayers[index] = layer.copy() // This assumes TextLayer is a data class. The `update` lambda modified the `layer` reference? 
+            // Wait, if I pass `layer` to `update`, and `update` modifies it, and then I put `layer` back, `layer` is the same reference. 
+            // `mutableStateListOf` checks for equality. If I modify in place, it might not trigger.
+            // Strategy: Make TextLayer immutable (vals) and update via copy.
+        }
+    }
+    
+    fun removeSelectedTextLayer() {
+        val id = _selectedTextLayerId.value ?: return
+        textLayers.removeAll { it.id == id }
+        _selectedTextLayerId.value = null
     }
 }

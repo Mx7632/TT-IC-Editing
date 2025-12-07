@@ -1,25 +1,37 @@
 package com.yourname.photoeditor
 
+import android.graphics.Bitmap
+import android.graphics.Typeface
 import android.net.Uri
 import android.util.Log
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicText
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.Region
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
@@ -27,11 +39,13 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.toSize
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import kotlin.math.abs
 import kotlin.math.roundToInt
 
 @Composable
@@ -45,6 +59,12 @@ fun EditScreen(
     var isCropMode by remember { mutableStateOf(false) }
     var isBrightnessMode by remember { mutableStateOf(false) }
     
+    // Text states
+    val textLayers = viewModel.textLayers
+    val selectedTextLayerId by viewModel.selectedTextLayerId.collectAsState()
+    var showTextInputDialog by remember { mutableStateOf(false) }
+    var editingTextLayerId by remember { mutableStateOf<String?>(null) }
+    
     // States for Brightness/Contrast
     val brightness by viewModel.brightness.collectAsState()
     val contrast by viewModel.contrast.collectAsState()
@@ -56,15 +76,28 @@ fun EditScreen(
         }
     }
 
+    if (showTextInputDialog && editingTextLayerId != null) {
+        val layer = textLayers.find { it.id == editingTextLayerId }
+        if (layer != null) {
+            TextInputDialog(
+                initialText = layer.text,
+                onDismiss = { showTextInputDialog = false },
+                onConfirm = { newText ->
+                    viewModel.updateTextLayer(layer.id) { it.text = newText }
+                    showTextInputDialog = false
+                    editingTextLayerId = null
+                }
+            )
+        }
+    }
+
     Scaffold(
         bottomBar = {
             if (isCropMode) {
                 CropToolbar(
-                    onConfirm = { 
-                        // Actual confirm is triggered from CropContainer
-                    },
+                    onConfirm = {}, // Handled in container
                     onCancel = { isCropMode = false },
-                    onRatioSelected = { /* Handled in CropContainer */ }
+                    onRatioSelected = {}
                 )
             } else if (isBrightnessMode) {
                 BrightnessContrastPanel(
@@ -77,16 +110,45 @@ fun EditScreen(
                         isBrightnessMode = false
                     }
                 )
+            } else if (selectedTextLayerId != null) {
+                // Text Style Panel
+                val selectedLayer = textLayers.find { it.id == selectedTextLayerId }
+                if (selectedLayer != null) {
+                    TextStylePanel(
+                        layer = selectedLayer,
+                        onUpdate = { update -> viewModel.updateTextLayer(selectedLayer.id, update) },
+                        onDelete = { viewModel.removeSelectedTextLayer() },
+                        onClose = { viewModel.selectTextLayer(null) }
+                    )
+                }
             } else {
                 EditToolbar(
                     onCropClick = { isCropMode = true },
-                    onRotateClick = { Log.d("EditScreen", "Rotate Clicked") },
+                    onRotateClick = { /* TODO */ },
                     onBrightnessClick = { 
                         viewModel.onEnterAdjustmentMode()
                         isBrightnessMode = true 
                     },
-                    onTextClick = { Log.d("EditScreen", "Text Clicked") },
-                    onSaveClick = { Log.d("EditScreen", "Save Clicked") }
+                    onTextClick = { 
+                        viewModel.addTextLayer()
+                        // Automatically show dialog for new text? 
+                        // User said: "add ... with default text ... and automatically pop up system input dialog"
+                        // So we need to trigger dialog for the newly added layer.
+                        // The newly added layer becomes selected.
+                        // We can detect this change or just trigger it here?
+                        // But addTextLayer is async in VM? No, it's sync.
+                        // We need the ID of the new layer.
+                        // VM's addTextLayer selects it.
+                        // So we can observe selection change? Or just manually trigger edit.
+                        // Ideally VM should return the ID or we find the last one.
+                        // Let's just find the last added one or selected one.
+                        val newId = viewModel.selectedTextLayerId.value
+                        if (newId != null) {
+                            editingTextLayerId = newId
+                            showTextInputDialog = true
+                        }
+                    },
+                    onSaveClick = { /* TODO */ }
                 )
             }
         }
@@ -95,7 +157,7 @@ fun EditScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
-                .background(Color.Black) // Dark background for editing
+                .background(Color.Black)
         ) {
             if (bitmapState != null) {
                 if (isCropMode) {
@@ -108,7 +170,18 @@ fun EditScreen(
                         onCropCancel = { isCropMode = false }
                     )
                 } else {
-                    ZoomableImage(bitmap = bitmapState!!)
+                    ZoomableEditor(
+                        bitmap = bitmapState!!,
+                        textLayers = textLayers,
+                        selectedLayerId = selectedTextLayerId,
+                        onLayerClick = { id -> viewModel.selectTextLayer(id) },
+                        onLayerUpdate = { id, update -> viewModel.updateTextLayer(id, update) },
+                        onLayerEdit = { id ->
+                            editingTextLayerId = id
+                            showTextInputDialog = true
+                        },
+                        onBackgroundClick = { viewModel.selectTextLayer(null) }
+                    )
                 }
             } else {
                 CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
@@ -116,6 +189,336 @@ fun EditScreen(
         }
     }
 }
+
+@Composable
+fun ZoomableEditor(
+    bitmap: Bitmap,
+    textLayers: List<TextLayer>,
+    selectedLayerId: String?,
+    onLayerClick: (String) -> Unit,
+    onLayerUpdate: (String, (TextLayer) -> Unit) -> Unit,
+    onLayerEdit: (String) -> Unit,
+    onBackgroundClick: () -> Unit
+) {
+    var scale by remember { mutableFloatStateOf(1f) }
+    var offset by remember { mutableStateOf(Offset.Zero) }
+    
+    // Calculate displayed image rect to map text coordinates
+    var containerSize by remember { mutableStateOf(IntSize.Zero) }
+    var imageRect by remember { mutableStateOf(Rect.Zero) }
+    
+    LaunchedEffect(containerSize, bitmap) {
+        if (containerSize.width > 0 && containerSize.height > 0) {
+            val (fitScale, fitOffset) = calculateFitScaleAndOffset(containerSize, bitmap.width, bitmap.height)
+            imageRect = Rect(fitOffset, Size(bitmap.width * fitScale, bitmap.height * fitScale))
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .onGloballyPositioned { containerSize = it.size }
+            .pointerInput(Unit) {
+                detectTapGestures(onTap = { onBackgroundClick() })
+            }
+            .pointerInput(Unit) {
+                detectTransformGestures { _, pan, zoom, _ ->
+                    scale = (scale * zoom).coerceIn(0.5f, 5f)
+                    offset += pan
+                }
+            }
+    ) {
+        // Container for Image + Text that transforms together
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer(
+                    scaleX = scale,
+                    scaleY = scale,
+                    translationX = offset.x,
+                    translationY = offset.y
+                )
+        ) {
+            // 1. The Image
+            Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = "Editing Image",
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Fit
+            )
+            
+            // 2. The Text Layers
+            // They need to be positioned relative to the imageRect.
+            // Since `Image` with ContentScale.Fit is centered (default), 
+            // `imageRect` tells us where it is relative to the Box(fillMaxSize).
+            // BUT, this inner Box is already fillMaxSize.
+            // The `Image` composable centers the content.
+            // So if we just put TextLayers in a Box that matches `imageRect` exactly?
+            // No, because `imageRect` is calculated based on `containerSize`.
+            // Inside this transformed Box, the coordinate system is 1:1 with container (before transform).
+            // So yes, we can use `imageRect`.
+            
+            if (imageRect != Rect.Zero) {
+                Box(
+                    modifier = Modifier
+                        .width(with(LocalDensity.current) { imageRect.width.toDp() })
+                        .height(with(LocalDensity.current) { imageRect.height.toDp() })
+                        .offset(
+                            with(LocalDensity.current) { imageRect.left.toDp() },
+                            with(LocalDensity.current) { imageRect.top.toDp() }
+                        )
+                ) {
+                    // Now we are in a box that exactly matches the displayed image bounds.
+                    // TextLayer positions (bitmap pixel coords) need to be scaled to this box.
+                    val fitScale = imageRect.width / bitmap.width
+                    
+                    textLayers.forEach { layer ->
+                        key(layer.id) {
+                            TextLayerItem(
+                                layer = layer,
+                                isSelected = layer.id == selectedLayerId,
+                                fitScale = fitScale,
+                                onSelect = { onLayerClick(layer.id) },
+                                onUpdate = { update -> onLayerUpdate(layer.id, update) },
+                                onEdit = { onLayerEdit(layer.id) }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun TextLayerItem(
+    layer: TextLayer,
+    isSelected: Boolean,
+    fitScale: Float,
+    onSelect: () -> Unit,
+    onUpdate: ((TextLayer) -> Unit) -> Unit,
+    onEdit: () -> Unit
+) {
+    val density = LocalDensity.current
+    
+    // Convert bitmap coords to screen coords (relative to image box)
+    val x = layer.position.x * fitScale
+    val y = layer.position.y * fitScale
+    
+    val fontSizeSp = with(density) { (layer.fontSize * fitScale).toSp() }
+    
+    // Gestures
+    // We need to map screen delta back to bitmap delta: delta / fitScale
+    
+    Box(
+        modifier = Modifier
+            .offset(
+                x = with(density) { x.toDp() },
+                y = with(density) { y.toDp() }
+            )
+            // Center the text on the point
+            .offset(
+                x = with(density) { -(layer.fontSize * layer.text.length * 0.3f).dp }, // Rough estimate for centering
+                y = with(density) { -(layer.fontSize * 0.6f).dp }
+            )
+            .graphicsLayer(
+                rotationZ = layer.rotation,
+                scaleX = layer.scale,
+                scaleY = layer.scale,
+                alpha = layer.alpha
+            )
+            .pointerInput(isSelected) {
+                if (isSelected) {
+                    detectTransformGestures { _, _, zoom, rotation ->
+                        onUpdate {
+                            it.scale *= zoom
+                            it.rotation += rotation
+                        }
+                    }
+                }
+            }
+            .pointerInput(Unit) {
+                detectDragGesturesAfterLongPress(
+                    onDragStart = { onSelect() },
+                    onDrag = { change, dragAmount ->
+                        change.consume()
+                        val dx = dragAmount.x / fitScale
+                        val dy = dragAmount.y / fitScale
+                        onUpdate {
+                            it.position += Offset(dx, dy)
+                        }
+                    }
+                )
+            }
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onTap = { onSelect() },
+                    onDoubleTap = { onEdit() }
+                )
+            }
+    ) {
+        BasicText(
+            text = layer.text,
+            style = TextStyle(
+                color = layer.color,
+                fontSize = fontSizeSp,
+                fontWeight = FontWeight.Normal,
+                fontFamily = getFontFamily(layer.fontFamilyIndex)
+            ),
+            modifier = Modifier
+                .then(
+                    if (isSelected) Modifier.border(1.dp, Color.White, RoundedCornerShape(4.dp)).padding(4.dp)
+                    else Modifier.padding(4.dp)
+                )
+        )
+    }
+}
+
+fun getFontFamily(index: Int): FontFamily {
+    return when (index) {
+        1 -> FontFamily.Serif
+        2 -> FontFamily.SansSerif
+        3 -> FontFamily.Monospace
+        4 -> FontFamily.Cursive
+        else -> FontFamily.Default
+    }
+}
+
+@Composable
+fun TextInputDialog(
+    initialText: String,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit
+) {
+    var text by remember { mutableStateOf(initialText) }
+    
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("编辑文字") },
+        text = {
+            TextField(
+                value = text,
+                onValueChange = { text = it }
+            )
+        },
+        confirmButton = {
+            Button(onClick = { onConfirm(text) }) {
+                Text("确定")
+            }
+        },
+        dismissButton = {
+            Button(onClick = onDismiss) {
+                Text("取消")
+            }
+        }
+    )
+}
+
+@Composable
+fun TextStylePanel(
+    layer: TextLayer,
+    onUpdate: ((TextLayer) -> Unit) -> Unit,
+    onDelete: () -> Unit,
+    onClose: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color.Black.copy(alpha = 0.9f))
+            .padding(16.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("样式编辑", color = Color.White, style = MaterialTheme.typography.titleMedium)
+            IconButton(onClick = onDelete) {
+                Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.Red)
+            }
+            IconButton(onClick = onClose) {
+                Icon(Icons.Default.Check, contentDescription = "Done", tint = Color.White)
+            }
+        }
+        
+        Spacer(modifier = Modifier.height(8.dp))
+        
+        // Font Size
+        Text("大小: ${layer.fontSize.toInt()}", color = Color.White)
+        Slider(
+            value = layer.fontSize,
+            onValueChange = { val v = it; onUpdate { it.fontSize = v } },
+            valueRange = 10f..200f
+        )
+        
+        // Alpha
+        Text("透明度: ${(layer.alpha * 100).toInt()}%", color = Color.White)
+        Slider(
+            value = layer.alpha,
+            onValueChange = { val v = it; onUpdate { it.alpha = v } },
+            valueRange = 0f..1f
+        )
+        
+        // Colors
+        Text("颜色", color = Color.White)
+        Row(
+            modifier = Modifier
+                .horizontalScroll(rememberScrollState())
+                .padding(vertical = 8.dp)
+        ) {
+            val colors = listOf(Color.White, Color.Black, Color.Red, Color.Green, Color.Blue, Color.Yellow, Color.Cyan, Color.Magenta)
+            colors.forEach { color ->
+                Box(
+                    modifier = Modifier
+                        .size(32.dp)
+                        .padding(4.dp)
+                        .clip(CircleShape)
+                        .background(color)
+                        .border(
+                            width = if (layer.color == color) 2.dp else 0.dp,
+                            color = if (layer.color == color) Color.Gray else Color.Transparent,
+                            shape = CircleShape
+                        )
+                        .pointerInput(Unit) {
+                            detectTapGestures { onUpdate { it.color = color } }
+                        }
+                )
+            }
+        }
+        
+        // Fonts
+        Text("字体", color = Color.White)
+        Row(
+            modifier = Modifier
+                .horizontalScroll(rememberScrollState())
+                .padding(vertical = 8.dp)
+        ) {
+            val fonts = listOf("默认", "衬线", "无衬线", "等宽", "手写")
+            fonts.forEachIndexed { index, name ->
+                FilterChip(
+                    selected = layer.fontFamilyIndex == index,
+                    onClick = { onUpdate { it.fontFamilyIndex = index } },
+                    label = { Text(name) },
+                    modifier = Modifier.padding(end = 8.dp)
+                )
+            }
+        }
+    }
+}
+
+// -------------------- UTILS & HELPERS --------------------
+
+fun calculateFitScaleAndOffset(containerSize: IntSize, bitmapWidth: Int, bitmapHeight: Int): Pair<Float, Offset> {
+    if (containerSize.width == 0 || containerSize.height == 0) return 1f to Offset.Zero
+    val wRatio = containerSize.width.toFloat() / bitmapWidth
+    val hRatio = containerSize.height.toFloat() / bitmapHeight
+    val scale = minOf(wRatio, hRatio)
+    val dx = (containerSize.width - bitmapWidth * scale) / 2f
+    val dy = (containerSize.height - bitmapHeight * scale) / 2f
+    return scale to Offset(dx, dy)
+}
+
+// -------------------- EXISTING BRIGHTNESS/CROP COMPONENTS --------------------
 
 @Composable
 fun BrightnessContrastPanel(
@@ -128,7 +531,7 @@ fun BrightnessContrastPanel(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(Color.Black.copy(alpha = 0.8f)) // Match dark theme
+            .background(Color.Black.copy(alpha = 0.8f))
             .padding(16.dp)
     ) {
         Text("亮度: ${brightness.toInt()}", color = Color.White)
@@ -151,38 +554,6 @@ fun BrightnessContrastPanel(
         ) {
             Text("完成")
         }
-    }
-}
-
-@Composable
-fun ZoomableImage(bitmap: android.graphics.Bitmap) {
-    var scale by remember { mutableFloatStateOf(1f) }
-    var offset by remember { mutableStateOf(Offset.Zero) }
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .pointerInput(Unit) {
-                detectTransformGestures { _, pan, zoom, _ ->
-                    scale = (scale * zoom).coerceIn(0.5f, 2f)
-                    val newOffset = offset + pan
-                    offset = newOffset
-                }
-            }
-    ) {
-        Image(
-            bitmap = bitmap.asImageBitmap(),
-            contentDescription = "Editing Image",
-            modifier = Modifier
-                .align(Alignment.Center)
-                .graphicsLayer(
-                    scaleX = scale,
-                    scaleY = scale,
-                    translationX = offset.x,
-                    translationY = offset.y
-                ),
-            contentScale = ContentScale.Fit
-        )
     }
 }
 
@@ -218,8 +589,6 @@ fun CropToolbar(
     // Placeholder, real controls are in CropContainer
 }
 
-// -------------------- CROP IMPLEMENTATION --------------------
-
 @Composable
 fun CropContainer(
     bitmap: android.graphics.Bitmap,
@@ -233,19 +602,11 @@ fun CropContainer(
 
     LaunchedEffect(containerSize, bitmap) {
         if (containerSize.width > 0 && containerSize.height > 0) {
-            val dstWidth = containerSize.width.toFloat()
-            val dstHeight = containerSize.height.toFloat()
-            val srcWidth = bitmap.width.toFloat()
-            val srcHeight = bitmap.height.toFloat()
-
-            val scale = minOf(dstWidth / srcWidth, dstHeight / srcHeight)
-            val displayedWidth = srcWidth * scale
-            val displayedHeight = srcHeight * scale
+            val (scale, offset) = calculateFitScaleAndOffset(containerSize, bitmap.width, bitmap.height)
+            val displayedWidth = bitmap.width * scale
+            val displayedHeight = bitmap.height * scale
             
-            val offsetX = (dstWidth - displayedWidth) / 2
-            val offsetY = (dstHeight - displayedHeight) / 2
-            
-            imageRect = Rect(offsetX, offsetY, offsetX + displayedWidth, offsetY + displayedHeight)
+            imageRect = Rect(offset, Size(displayedWidth, displayedHeight))
             cropRect = imageRect
         }
     }
