@@ -95,16 +95,29 @@ class EditViewModel(application: Application) : AndroidViewModel(application) {
         return inSampleSize
     }
 
-    // --- Crop Feature ---
+    // --- 裁剪功能 ---
+    /**
+     * 裁剪当前位图。
+     * @param x 裁剪区域左上角的 x 坐标。
+     * @param y 裁剪区域左上角的 y 坐标。
+     * @param width 裁剪区域的宽度。
+     * @param height 裁剪区域的高度。
+     *
+     * 在后台线程执行以防止 UI 卡顿。
+     * 包含安全检查以确保裁剪区域在位图范围内。
+     */
     fun cropBitmap(x: Int, y: Int, width: Int, height: Int) {
         val currentBitmap = _bitmap.value ?: return
         viewModelScope.launch(Dispatchers.IO) {
             try {
+                // 确保裁剪矩形在图像范围内，防止崩溃
                 val safeX = x.coerceIn(0, currentBitmap.width)
                 val safeY = y.coerceIn(0, currentBitmap.height)
                 val safeWidth = width.coerceAtMost(currentBitmap.width - safeX)
                 val safeHeight = height.coerceAtMost(currentBitmap.height - safeY)
+                
                 if (safeWidth <= 0 || safeHeight <= 0) return@launch
+                
                 val croppedBitmap = Bitmap.createBitmap(currentBitmap, safeX, safeY, safeWidth, safeHeight)
                 _bitmap.value = croppedBitmap
             } catch (e: Exception) {
@@ -113,6 +126,13 @@ class EditViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * 将位图旋转指定角度。
+     * @param degrees 旋转角度（例如 90f, -90f）。
+     *
+     * 使用 Android 的 Matrix 类执行旋转。
+     * 注意：带有 Matrix 参数的 Bitmap.createBitmap 处理实际的像素变换。
+     */
     fun rotateBitmap(degrees: Float) {
         val currentBitmap = _bitmap.value ?: return
         viewModelScope.launch(Dispatchers.IO) {
@@ -128,6 +148,15 @@ class EditViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * 水平或垂直翻转位图。
+     * @param horizontal 是否水平翻转。
+     * @param vertical 是否垂直翻转。
+     *
+     * 使用 Matrix 的 postScale 传入负值来实现翻转效果。
+     * - 水平翻转: scale(-1, 1)
+     * - 垂直翻转: scale(1, -1)
+     */
     fun flipBitmap(horizontal: Boolean, vertical: Boolean) {
         val currentBitmap = _bitmap.value ?: return
         viewModelScope.launch(Dispatchers.IO) {
@@ -203,10 +232,15 @@ class EditViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // --- Text Layer Management ---
+    // --- 文本图层管理 ---
+    // 管理文本覆盖列表。
+    // 使用 mutableStateListOf 以便 Compose 进行观察。
+    // 注意：当更新列表项时，我们必须替换列表中的项目以触发重组，
+    // 因为 mutableStateListOf 跟踪的是列表结构的更改，而不是其元素属性的更改。
 
     fun addTextLayer() {
         val currentBitmap = _bitmap.value ?: return
+        // 默认位置：图像中心
         val centerX = currentBitmap.width / 2f
         val centerY = currentBitmap.height / 2f
         
@@ -221,20 +255,30 @@ class EditViewModel(application: Application) : AndroidViewModel(application) {
         _selectedTextLayerId.value = id
     }
 
+    /**
+     * 安全地更新文本图层以确保 UI 重组。
+     * @param id 要更新的图层的 ID
+     * @param update 修改图层属性的 Lambda 表达式
+     *
+     * 此函数实现了“复制并替换”策略：
+     * 1. 查找图层。
+     * 2. 创建图层的浅拷贝副本。
+     * 3. 对副本应用更新。
+     * 4. 用更新后的副本替换列表中的原始图层。
+     *
+     * 这至关重要，因为 Jetpack Compose 的 mutableStateListOf 观察的是列表引用（添加/删除/替换）的更改，
+     * 而不是列表中可变对象内部属性的更改。
+     */
     fun updateTextLayer(id: String, update: (TextLayer) -> Unit) {
         val index = textLayers.indexOfFirst { it.id == id }
         if (index != -1) {
             val layer = textLayers[index]
-            // Create a copy first, then apply updates to the copy if properties are vars,
-            // OR if properties are vars, we just update them and then force a list update.
-            // But since TextLayer has vars (from previous Read), we need to be careful.
-            // The cleanest way with Compose state lists is to replace the item.
             
-            // 1. Create a copy of the current layer
+            // 1. 创建当前图层的副本
             val newLayer = layer.copy()
-            // 2. Apply updates to the NEW layer
+            // 2. 对新图层应用更新
             update(newLayer)
-            // 3. Replace in the list to trigger observers
+            // 3. 在列表中替换以触发观察者
             textLayers[index] = newLayer
         }
     }
@@ -245,7 +289,10 @@ class EditViewModel(application: Application) : AndroidViewModel(application) {
         _selectedTextLayerId.value = null
     }
 
-    // --- Filter Feature ---
+    // --- 滤镜功能 ---
+    // 对图像应用颜色滤镜。
+    // 使用后台协程 (Dispatchers.IO) 避免在进行繁重的矩阵计算时阻塞主线程。
+    
     private var originalBitmapForFilter: Bitmap? = null
     private val _currentFilter = MutableStateFlow(ImageProcessor.FilterType.Original)
     val currentFilter: StateFlow<ImageProcessor.FilterType> = _currentFilter.asStateFlow()
@@ -261,6 +308,7 @@ class EditViewModel(application: Application) : AndroidViewModel(application) {
         _currentFilter.value = filterType
         val base = originalBitmapForFilter ?: return
         
+        // 在 IO 范围启动，因为滤镜应用涉及通过 ColorMatrix 进行逐像素处理
         viewModelScope.launch(Dispatchers.IO) {
             val result = ImageProcessor.applyFilter(base, filterType)
             _bitmap.value = result

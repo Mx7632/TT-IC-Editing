@@ -351,7 +351,7 @@ fun TextLayerItem(
     val density = LocalDensity.current
     var textSize by remember { mutableStateOf(IntSize.Zero) }
     
-    // Convert bitmap coords to screen coords (relative to image box)
+    // 将位图坐标转换为屏幕坐标（相对于图像框）
     val x = layer.position.x * fitScale
     val y = layer.position.y * fitScale
     
@@ -363,7 +363,9 @@ fun TextLayerItem(
                 x = with(density) { x.toDp() },
                 y = with(density) { y.toDp() }
             )
-            // Center the text based on actual measured size
+            // 根据实际测量尺寸居中文本
+            // 我们使用下面的 onTextLayout 来捕获真实的渲染尺寸。
+            // 这确保了文本围绕其视觉中心旋转/缩放，而不是左上角。
             .offset(
                 x = with(density) { -(textSize.width / 2).toDp() }, 
                 y = with(density) { -(textSize.height / 2).toDp() }
@@ -375,18 +377,22 @@ fun TextLayerItem(
                 alpha = layer.alpha
             )
             .pointerInput(isSelected) {
+                // 统一手势检测器：同时处理平移、缩放和旋转。
+                // 这比分离 Drag 和 Transform 监听器提供更流畅的体验。
                 detectTransformGestures { _, pan, zoom, rotation ->
                     if (!isSelected) onSelect()
                     onUpdate {
-                        // Update fontSize instead of scale for better UX consistency
+                        // 将缩放手势映射到 fontSize 更改而不是 scaleX/Y。
+                        // 这保持了文本渲染的清晰度（矢量缩放），而不是像素化的位图缩放。
                         it.fontSize *= zoom
                         it.fontSize = it.fontSize.coerceIn(10f, 500f)
                         
-                        // Normalize rotation to 0-360
+                        // 将旋转归一化到 0-360 度
                         it.rotation += rotation
                         it.rotation = (it.rotation % 360 + 360) % 360
                         
-                        // Apply pan (drag) during transform
+                        // 应用平移（拖动）
+                        // 必须除以 fitScale 以将屏幕像素映射回位图坐标空间。
                         val dx = pan.x / fitScale
                         val dy = pan.y / fitScale
                         it.position += Offset(dx, dy)
@@ -408,6 +414,7 @@ fun TextLayerItem(
                 fontWeight = FontWeight.Normal,
                 fontFamily = getFontFamily(layer.fontFamilyIndex)
             ),
+            // 捕获布局尺寸以进行精确居中
             onTextLayout = { textSize = it.size },
             modifier = Modifier
                 .then(
@@ -754,7 +761,10 @@ fun CropOverlay(
     aspectRatio: Float?,
     onRectChange: (Rect) -> Unit
 ) {
+    // 当前正在拖动的手柄
     var activeHandle by remember { mutableStateOf(CropHandle.None) }
+    // 使用 rememberUpdatedState 确保手势检测器始终能看到最新的 rect
+    // 而不需要在每次重组时重新启动整个手势检测流程。
     val currentRect by rememberUpdatedState(rect)
 
     Canvas(
@@ -763,18 +773,20 @@ fun CropOverlay(
             .pointerInput(imageBounds, aspectRatio) {
                 detectDragGestures(
                     onDragStart = { offset ->
+                        // 碰撞测试：检测点击了哪个手柄
                         val r = currentRect
                         val left = r.left
                         val top = r.top
                         val right = r.right
                         val bottom = r.bottom
-                        val threshold = 100f
+                        val threshold = 100f // 手柄的触摸目标大小
 
                         val distTL = (offset - Offset(left, top)).getDistance()
                         val distTR = (offset - Offset(right, top)).getDistance()
                         val distBL = (offset - Offset(left, bottom)).getDistance()
                         val distBR = (offset - Offset(right, bottom)).getDistance()
 
+                        // 优先考虑角落而不是中心
                         activeHandle = when {
                             distTL < threshold -> CropHandle.TopLeft
                             distTR < threshold -> CropHandle.TopRight
@@ -796,6 +808,7 @@ fun CropOverlay(
                         var newRight = r.right
                         var newBottom = r.bottom
 
+                        // 根据活动手柄应用拖动增量
                         when (activeHandle) {
                             CropHandle.TopLeft -> {
                                 newLeft += dragAmount.x
@@ -822,6 +835,7 @@ fun CropOverlay(
                             else -> {}
                         }
 
+                        // 限制在图像边界内
                         if (activeHandle == CropHandle.Center) {
                             val width = r.width
                             val height = r.height
@@ -830,6 +844,7 @@ fun CropOverlay(
                             newRight = newLeft + width
                             newBottom = newTop + height
                         } else {
+                            // 强制最小尺寸为 50px
                             newLeft = newLeft.coerceIn(imageBounds.left, newRight - 50f)
                             newTop = newTop.coerceIn(imageBounds.top, newBottom - 50f)
                             newRight = newRight.coerceIn(newLeft + 50f, imageBounds.right)
@@ -837,6 +852,8 @@ fun CropOverlay(
                         }
 
                         var newRect = Rect(newLeft, newTop, newRight, newBottom)
+                        
+                        // 如果设置了纵横比，则强制执行纵横比
                         if (aspectRatio != null && activeHandle != CropHandle.Center) {
                             newRect = fitAspectRatio(newRect, imageBounds, aspectRatio)
                         }
