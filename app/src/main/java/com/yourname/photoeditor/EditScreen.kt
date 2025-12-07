@@ -4,6 +4,8 @@ import android.graphics.Bitmap
 import android.graphics.Typeface
 import android.net.Uri
 import android.util.Log
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -58,6 +60,7 @@ fun EditScreen(
     // States for modes
     var isCropMode by remember { mutableStateOf(false) }
     var isBrightnessMode by remember { mutableStateOf(false) }
+    var isFilterMode by remember { mutableStateOf(false) }
     
     // Text states
     val textLayers = viewModel.textLayers
@@ -69,10 +72,34 @@ fun EditScreen(
     val brightness by viewModel.brightness.collectAsState()
     val contrast by viewModel.contrast.collectAsState()
 
+    // States for Filter & Save
+    val currentFilter by viewModel.currentFilter.collectAsState()
+    val saveState by viewModel.saveState.collectAsState()
+    val snackbarHostState = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
+
     // Load image when Uri changes or screen enters
     LaunchedEffect(imageUri) {
         imageUri?.let {
             viewModel.loadImage(Uri.parse(it))
+        }
+    }
+
+    LaunchedEffect(saveState) {
+        when (val state = saveState) {
+            is EditViewModel.SaveResult.Success -> {
+                scope.launch {
+                    snackbarHostState.showSnackbar("保存成功")
+                }
+                viewModel.resetSaveState()
+            }
+            is EditViewModel.SaveResult.Error -> {
+                scope.launch {
+                    snackbarHostState.showSnackbar("保存失败: ${state.message}")
+                }
+                viewModel.resetSaveState()
+            }
+            else -> {}
         }
     }
 
@@ -92,6 +119,7 @@ fun EditScreen(
     }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         bottomBar = {
             if (isCropMode) {
                 CropToolbar(
@@ -108,6 +136,15 @@ fun EditScreen(
                     onClose = {
                         viewModel.onExitAdjustmentMode(save = true)
                         isBrightnessMode = false
+                    }
+                )
+            } else if (isFilterMode) {
+                FilterPanel(
+                    currentFilter = currentFilter,
+                    onFilterSelect = { viewModel.onFilterSelected(it) },
+                    onClose = {
+                        viewModel.onExitFilterMode(save = true)
+                        isFilterMode = false
                     }
                 )
             } else if (selectedTextLayerId != null) {
@@ -129,26 +166,19 @@ fun EditScreen(
                         viewModel.onEnterAdjustmentMode()
                         isBrightnessMode = true 
                     },
+                    onFilterClick = {
+                        viewModel.onEnterFilterMode()
+                        isFilterMode = true
+                    },
                     onTextClick = { 
                         viewModel.addTextLayer()
-                        // Automatically show dialog for new text? 
-                        // User said: "add ... with default text ... and automatically pop up system input dialog"
-                        // So we need to trigger dialog for the newly added layer.
-                        // The newly added layer becomes selected.
-                        // We can detect this change or just trigger it here?
-                        // But addTextLayer is async in VM? No, it's sync.
-                        // We need the ID of the new layer.
-                        // VM's addTextLayer selects it.
-                        // So we can observe selection change? Or just manually trigger edit.
-                        // Ideally VM should return the ID or we find the last one.
-                        // Let's just find the last added one or selected one.
                         val newId = viewModel.selectedTextLayerId.value
                         if (newId != null) {
                             editingTextLayerId = newId
                             showTextInputDialog = true
                         }
                     },
-                    onSaveClick = { /* TODO */ }
+                    onSaveClick = { viewModel.saveImage() }
                 )
             }
         }
@@ -185,6 +215,17 @@ fun EditScreen(
                 }
             } else {
                 CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+            }
+
+            if (saveState is EditViewModel.SaveResult.Loading) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.5f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator()
+                }
             }
         }
     }
@@ -562,6 +603,7 @@ fun EditToolbar(
     onCropClick: () -> Unit,
     onRotateClick: () -> Unit,
     onBrightnessClick: () -> Unit,
+    onFilterClick: () -> Unit,
     onTextClick: () -> Unit,
     onSaveClick: () -> Unit
 ) {
@@ -575,6 +617,7 @@ fun EditToolbar(
         TextButton(onClick = onCropClick) { Text("裁剪") }
         TextButton(onClick = onRotateClick) { Text("旋转") }
         TextButton(onClick = onBrightnessClick) { Text("亮度") }
+        TextButton(onClick = onFilterClick) { Text("滤镜") }
         TextButton(onClick = onTextClick) { Text("文字") }
         Button(onClick = onSaveClick) { Text("保存") }
     }
@@ -840,4 +883,75 @@ fun fitAspectRatio(currentRect: Rect, bounds: Rect, ratio: Float): Rect {
     }
     
     return Rect(newLeft, newTop, newRight, newBottom)
+}
+
+@Composable
+fun FilterPanel(
+    currentFilter: ImageProcessor.FilterType,
+    onFilterSelect: (ImageProcessor.FilterType) -> Unit,
+    onClose: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color.Black.copy(alpha = 0.9f))
+            .padding(16.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("滤镜选择", color = Color.White, style = MaterialTheme.typography.titleMedium)
+            IconButton(onClick = onClose) {
+                Icon(Icons.Default.Check, contentDescription = "Done", tint = Color.White)
+            }
+        }
+        
+        LazyRow(
+            modifier = Modifier.padding(vertical = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            items(ImageProcessor.FilterType.values()) { filter ->
+                FilterItem(
+                    filter = filter,
+                    isSelected = filter == currentFilter,
+                    onClick = { onFilterSelect(filter) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun FilterItem(
+    filter: ImageProcessor.FilterType,
+    isSelected: Boolean,
+    onClick: () -> Unit
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.clickable(onClick = onClick)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(60.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(if (isSelected) MaterialTheme.colorScheme.primary else Color.Gray)
+                .border(2.dp, if (isSelected) Color.White else Color.Transparent, RoundedCornerShape(8.dp)),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = filter.displayName.take(1),
+                color = Color.White,
+                style = MaterialTheme.typography.titleLarge
+            )
+        }
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = filter.displayName,
+            color = if (isSelected) MaterialTheme.colorScheme.primary else Color.White,
+            style = MaterialTheme.typography.bodySmall
+        )
+    }
 }
