@@ -167,7 +167,7 @@ fun EditScreen(
             } else {
                 EditToolbar(
                     onCropClick = { isCropMode = true },
-                    onRotateClick = { /* TODO */ },
+                    onRotateClick = { viewModel.rotateBitmap(90f) },
                     onBrightnessClick = { 
                         viewModel.onEnterAdjustmentMode()
                         isBrightnessMode = true 

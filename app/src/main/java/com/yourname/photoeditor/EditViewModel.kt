@@ -1,6 +1,7 @@
 package com.yourname.photoeditor
 
 import android.graphics.Canvas
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Typeface
 import android.os.Build
@@ -108,6 +109,21 @@ class EditViewModel(application: Application) : AndroidViewModel(application) {
                 _bitmap.value = croppedBitmap
             } catch (e: Exception) {
                 Log.e("EditViewModel", "Error cropping image", e)
+            }
+        }
+    }
+
+    fun rotateBitmap(degrees: Float) {
+        val currentBitmap = _bitmap.value ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val matrix = Matrix().apply { postRotate(degrees) }
+                val rotatedBitmap = Bitmap.createBitmap(
+                    currentBitmap, 0, 0, currentBitmap.width, currentBitmap.height, matrix, true
+                )
+                _bitmap.value = rotatedBitmap
+            } catch (e: Exception) {
+                Log.e("EditViewModel", "Error rotating image", e)
             }
         }
     }
