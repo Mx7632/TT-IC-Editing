@@ -376,16 +376,23 @@ fun TextLayerItem(
             )
             .pointerInput(isSelected) {
                 if (isSelected) {
-                    detectTransformGestures { _, _, zoom, rotation ->
+                    detectTransformGestures { _, pan, zoom, rotation ->
                         onUpdate {
                             it.scale *= zoom
                             it.rotation += rotation
+                            // Apply pan (drag) during transform as well if needed, 
+                            // but usually drag is separate. 
+                            // However, detectTransformGestures consumes pan events too.
+                            // So we should handle dragging here if selected.
+                            val dx = pan.x / fitScale
+                            val dy = pan.y / fitScale
+                            it.position += Offset(dx, dy)
                         }
                     }
                 }
             }
             .pointerInput(Unit) {
-                detectDragGesturesAfterLongPress(
+                detectDragGestures(
                     onDragStart = { onSelect() },
                     onDrag = { change, dragAmount ->
                         change.consume()

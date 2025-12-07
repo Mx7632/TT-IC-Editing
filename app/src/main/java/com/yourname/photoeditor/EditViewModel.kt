@@ -205,24 +205,17 @@ class EditViewModel(application: Application) : AndroidViewModel(application) {
         val index = textLayers.indexOfFirst { it.id == id }
         if (index != -1) {
             val layer = textLayers[index]
-            update(layer)
-            // Trigger recomposition by replacing item (mutableStateListOf tracks adds/removes/replacements)
-            // Since properties are vars, simple property update might not trigger list listener if we don't be careful,
-            // but for mutableStateListOf, updating a property of an element doesn't automatically trigger list flow.
-            // However, the UI observing the list will read the properties. 
-            // Better: copy or force refresh. But TextLayer has vars.
-            // Jetpack Compose SnapshotStateList: "If the elements are mutable objects, updating their properties won't trigger recomposition unless the properties themselves are backed by MutableState."
-            // Our TextLayer properties are plain vars. This is a problem.
-            // We should either make TextLayer properties MutableState or replace the object in the list.
-            // Let's replace the object in the list using copy (if it were a data class with vals) or just creating a new one.
-            // Since I made them vars, I should probably change them to vals and use copy, or wrap them in MutableState.
-            // Actually, let's just make TextLayer a data class with vals and use copy to be safe and idiomatic.
-            // I will fix TextLayer definition in a moment or just handle replacement here.
-            // For now, I'll stick to replacing the object in the list.
-            textLayers[index] = layer.copy() // This assumes TextLayer is a data class. The `update` lambda modified the `layer` reference? 
-            // Wait, if I pass `layer` to `update`, and `update` modifies it, and then I put `layer` back, `layer` is the same reference. 
-            // `mutableStateListOf` checks for equality. If I modify in place, it might not trigger.
-            // Strategy: Make TextLayer immutable (vals) and update via copy.
+            // Create a copy first, then apply updates to the copy if properties are vars,
+            // OR if properties are vars, we just update them and then force a list update.
+            // But since TextLayer has vars (from previous Read), we need to be careful.
+            // The cleanest way with Compose state lists is to replace the item.
+            
+            // 1. Create a copy of the current layer
+            val newLayer = layer.copy()
+            // 2. Apply updates to the NEW layer
+            update(newLayer)
+            // 3. Replace in the list to trigger observers
+            textLayers[index] = newLayer
         }
     }
     
