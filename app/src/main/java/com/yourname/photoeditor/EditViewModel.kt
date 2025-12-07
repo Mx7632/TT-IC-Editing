@@ -128,6 +128,26 @@ class EditViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun flipBitmap(horizontal: Boolean, vertical: Boolean) {
+        val currentBitmap = _bitmap.value ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val matrix = Matrix().apply { 
+                    postScale(
+                        if (horizontal) -1f else 1f,
+                        if (vertical) -1f else 1f
+                    )
+                }
+                val flippedBitmap = Bitmap.createBitmap(
+                    currentBitmap, 0, 0, currentBitmap.width, currentBitmap.height, matrix, true
+                )
+                _bitmap.value = flippedBitmap
+            } catch (e: Exception) {
+                Log.e("EditViewModel", "Error flipping image", e)
+            }
+        }
+    }
+
     // --- Brightness/Contrast Feature ---
     
     fun onEnterAdjustmentMode() {

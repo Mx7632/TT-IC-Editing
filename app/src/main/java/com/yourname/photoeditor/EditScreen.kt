@@ -168,6 +168,8 @@ fun EditScreen(
                 EditToolbar(
                     onCropClick = { isCropMode = true },
                     onRotateClick = { viewModel.rotateBitmap(90f) },
+                    onFlipHorizontalClick = { viewModel.flipBitmap(horizontal = true, vertical = false) },
+                    onFlipVerticalClick = { viewModel.flipBitmap(horizontal = false, vertical = true) },
                     onBrightnessClick = { 
                         viewModel.onEnterAdjustmentMode()
                         isBrightnessMode = true 
@@ -603,6 +605,8 @@ fun BrightnessContrastPanel(
 fun EditToolbar(
     onCropClick: () -> Unit,
     onRotateClick: () -> Unit,
+    onFlipHorizontalClick: () -> Unit,
+    onFlipVerticalClick: () -> Unit,
     onBrightnessClick: () -> Unit,
     onFilterClick: () -> Unit,
     onTextClick: () -> Unit,
@@ -617,6 +621,8 @@ fun EditToolbar(
     ) {
         TextButton(onClick = onCropClick) { Text("裁剪") }
         TextButton(onClick = onRotateClick) { Text("旋转") }
+        TextButton(onClick = onFlipHorizontalClick) { Text("水平翻转") }
+        TextButton(onClick = onFlipVerticalClick) { Text("垂直翻转") }
         TextButton(onClick = onBrightnessClick) { Text("亮度") }
         TextButton(onClick = onFilterClick) { Text("滤镜") }
         TextButton(onClick = onTextClick) { Text("文字") }
