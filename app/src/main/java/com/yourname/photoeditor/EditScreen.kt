@@ -40,7 +40,14 @@ fun EditScreen(
     viewModel: EditViewModel = viewModel()
 ) {
     val bitmapState by viewModel.bitmap.collectAsState()
+    
+    // States for modes
     var isCropMode by remember { mutableStateOf(false) }
+    var isBrightnessMode by remember { mutableStateOf(false) }
+    
+    // States for Brightness/Contrast
+    val brightness by viewModel.brightness.collectAsState()
+    val contrast by viewModel.contrast.collectAsState()
 
     // Load image when Uri changes or screen enters
     LaunchedEffect(imageUri) {
@@ -54,19 +61,30 @@ fun EditScreen(
             if (isCropMode) {
                 CropToolbar(
                     onConfirm = { 
-                        // The actual confirm action is handled inside CropContainer via callback,
-                        // but since we moved logic here, we need a way to trigger it.
-                        // Actually, it's better if CropContainer exposes the crop action or handles the state.
-                        // For simplicity, we will let CropContainer manage the crop state and trigger the callback.
+                        // Actual confirm is triggered from CropContainer
                     },
                     onCancel = { isCropMode = false },
                     onRatioSelected = { /* Handled in CropContainer */ }
+                )
+            } else if (isBrightnessMode) {
+                BrightnessContrastPanel(
+                    brightness = brightness,
+                    contrast = contrast,
+                    onBrightnessChange = { viewModel.onBrightnessChanged(it) },
+                    onContrastChange = { viewModel.onContrastChanged(it) },
+                    onClose = {
+                        viewModel.onExitAdjustmentMode(save = true)
+                        isBrightnessMode = false
+                    }
                 )
             } else {
                 EditToolbar(
                     onCropClick = { isCropMode = true },
                     onRotateClick = { Log.d("EditScreen", "Rotate Clicked") },
-                    onBrightnessClick = { Log.d("EditScreen", "Brightness Clicked") },
+                    onBrightnessClick = { 
+                        viewModel.onEnterAdjustmentMode()
+                        isBrightnessMode = true 
+                    },
                     onTextClick = { Log.d("EditScreen", "Text Clicked") },
                     onSaveClick = { Log.d("EditScreen", "Save Clicked") }
                 )
@@ -95,6 +113,43 @@ fun EditScreen(
             } else {
                 CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
             }
+        }
+    }
+}
+
+@Composable
+fun BrightnessContrastPanel(
+    brightness: Float,
+    contrast: Float,
+    onBrightnessChange: (Float) -> Unit,
+    onContrastChange: (Float) -> Unit,
+    onClose: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color.Black.copy(alpha = 0.8f)) // Match dark theme
+            .padding(16.dp)
+    ) {
+        Text("亮度: ${brightness.toInt()}", color = Color.White)
+        Slider(
+            value = brightness,
+            onValueChange = onBrightnessChange,
+            valueRange = -100f..100f
+        )
+        Spacer(modifier = Modifier.height(8.dp))
+        Text("对比度: ${contrast.toInt()}", color = Color.White)
+        Slider(
+            value = contrast,
+            onValueChange = onContrastChange,
+            valueRange = -50f..150f
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+        Button(
+            onClick = onClose,
+            modifier = Modifier.align(Alignment.End)
+        ) {
+            Text("完成")
         }
     }
 }
@@ -156,14 +211,11 @@ fun EditToolbar(
 
 @Composable
 fun CropToolbar(
-    onConfirm: () -> Unit, // This might be used differently if CropContainer handles state
+    onConfirm: () -> Unit,
     onCancel: () -> Unit,
-    onRatioSelected: (Float?) -> Unit // Null for Free
+    onRatioSelected: (Float?) -> Unit
 ) {
-    // This toolbar is tricky because it needs to communicate with CropContainer state.
-    // We'll move the specific Ratio buttons INTO CropContainer or hoist state.
-    // For this structure, let's just use it as a placeholder and render the real controls inside CropContainer or hoist state up.
-    // However, to follow the request "bottom toolbar should appear...", we need to hoist state.
+    // Placeholder, real controls are in CropContainer
 }
 
 // -------------------- CROP IMPLEMENTATION --------------------
@@ -174,15 +226,11 @@ fun CropContainer(
     onCropConfirm: (Int, Int, Int, Int) -> Unit,
     onCropCancel: () -> Unit
 ) {
-    // We need to know the displayed image size to draw the overlay correctly.
-    // BoxWithConstraints or onGloballyPositioned can help.
-    
     var containerSize by remember { mutableStateOf(IntSize.Zero) }
     var cropRect by remember { mutableStateOf(Rect.Zero) }
     var imageRect by remember { mutableStateOf(Rect.Zero) }
     var currentAspectRatio by remember { mutableStateOf<Float?>(null) } // Null = Free
 
-    // Calculate image placement when container size is known
     LaunchedEffect(containerSize, bitmap) {
         if (containerSize.width > 0 && containerSize.height > 0) {
             val dstWidth = containerSize.width.toFloat()
@@ -198,7 +246,6 @@ fun CropContainer(
             val offsetY = (dstHeight - displayedHeight) / 2
             
             imageRect = Rect(offsetX, offsetY, offsetX + displayedWidth, offsetY + displayedHeight)
-            // Initialize crop rect to full image
             cropRect = imageRect
         }
     }
@@ -210,7 +257,6 @@ fun CropContainer(
                 containerSize = coordinates.size
             }
     ) {
-        // 1. Draw the image (static, fitted)
         if (imageRect != Rect.Zero) {
             Image(
                 bitmap = bitmap.asImageBitmap(),
@@ -228,7 +274,6 @@ fun CropContainer(
             )
         }
 
-        // 2. Crop Overlay
         if (cropRect != Rect.Zero) {
             CropOverlay(
                 rect = cropRect,
@@ -238,14 +283,12 @@ fun CropContainer(
             )
         }
         
-        // 3. Crop Controls (Bottom Overlay)
         Column(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
                 .background(Color.Black.copy(alpha = 0.8f))
         ) {
-            // Aspect Ratio Buttons
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -254,23 +297,21 @@ fun CropContainer(
             ) {
                 TextButton(onClick = { 
                     currentAspectRatio = null 
-                    cropRect = imageRect // Reset to full on free? Or just unlock? Let's just unlock.
-                }) { Text("Free") }
+                }) { Text("Free", color = Color.White) }
                 TextButton(onClick = { 
                     currentAspectRatio = 1f 
                     cropRect = fitAspectRatio(cropRect, imageRect, 1f)
-                }) { Text("1:1") }
+                }) { Text("1:1", color = Color.White) }
                 TextButton(onClick = { 
                     currentAspectRatio = 4f/3f 
                     cropRect = fitAspectRatio(cropRect, imageRect, 4f/3f)
-                }) { Text("4:3") }
+                }) { Text("4:3", color = Color.White) }
                 TextButton(onClick = { 
                     currentAspectRatio = 16f/9f 
                     cropRect = fitAspectRatio(cropRect, imageRect, 16f/9f)
-                }) { Text("16:9") }
+                }) { Text("16:9", color = Color.White) }
             }
             
-            // Confirm/Cancel
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -279,7 +320,6 @@ fun CropContainer(
             ) {
                 Button(onClick = onCropCancel) { Text("取消") }
                 Button(onClick = {
-                    // Calculate pixel coordinates
                     val scale = bitmap.width.toFloat() / imageRect.width
                     val x = ((cropRect.left - imageRect.left) * scale).roundToInt()
                     val y = ((cropRect.top - imageRect.top) * scale).roundToInt()
@@ -292,35 +332,6 @@ fun CropContainer(
     }
 }
 
-fun fitAspectRatio(currentRect: Rect, bounds: Rect, ratio: Float): Rect {
-    // Try to keep center the same, adjust width/height
-    var w = currentRect.width
-    var h = w / ratio
-    
-    if (h > bounds.height) {
-        h = bounds.height
-        w = h * ratio
-    }
-    if (w > bounds.width) {
-        w = bounds.width
-        h = w / ratio
-    }
-    
-    val cx = currentRect.center.x
-    val cy = currentRect.center.y
-    
-    var left = cx - w / 2
-    var top = cy - h / 2
-    
-    // Adjust if out of bounds
-    if (left < bounds.left) left = bounds.left
-    if (top < bounds.top) top = bounds.top
-    if (left + w > bounds.right) left = bounds.right - w
-    if (top + h > bounds.bottom) top = bounds.bottom - h
-    
-    return Rect(left, top, left + w, top + h)
-}
-
 @Composable
 fun CropOverlay(
     rect: Rect,
@@ -328,47 +339,27 @@ fun CropOverlay(
     aspectRatio: Float?,
     onRectChange: (Rect) -> Unit
 ) {
-    val handleSize = 40.dp
-    val handleSizePx = with(LocalDensity.current) { handleSize.toPx() }
-    val touchSlop = 50f // Area around handle to catch touch
-
     Canvas(
         modifier = Modifier
             .fillMaxSize()
             .pointerInput(imageBounds, aspectRatio) {
                 detectDragGestures(
-                    onDragStart = { offset ->
-                        // Determine which handle is touched
-                        // We store the active handle in a closure variable for the drag session
-                    },
                     onDrag = { change, dragAmount ->
                         change.consume()
-                        
-                        // Simple hit testing for corners
-                        // (In a real app, this should be robust. Here we do a quick check based on distance)
                         val left = rect.left
                         val top = rect.top
                         val right = rect.right
                         val bottom = rect.bottom
-                        
-                        // Distance to corners
                         val distTL = (change.position - Offset(left, top)).getDistance()
                         val distTR = (change.position - Offset(right, top)).getDistance()
                         val distBL = (change.position - Offset(left, bottom)).getDistance()
                         val distBR = (change.position - Offset(right, bottom)).getDistance()
-                        
-                        // Threshold
                         val threshold = 100f
-                        
                         var newLeft = left
                         var newTop = top
                         var newRight = right
                         var newBottom = bottom
-                        
-                        // Identify handle (Naive "closest corner" approach for simplicity in this turn)
-                        // Ideally we should lock the handle type on drag start.
-                        // Let's assume the user grabs near a corner.
-                        
+
                         if (distTL < threshold) {
                             newLeft += dragAmount.x
                             newTop += dragAmount.y
@@ -382,139 +373,110 @@ fun CropOverlay(
                             newRight += dragAmount.x
                             newBottom += dragAmount.y
                         } else {
-                            // Drag whole rect
                             newLeft += dragAmount.x
                             newRight += dragAmount.x
                             newTop += dragAmount.y
                             newBottom += dragAmount.y
                         }
-                        
-                        // Constrain to bounds
-                        // If moving whole rect
-                        if (distTL >= threshold && distTR >= threshold && distBL >= threshold && distBR >= threshold) {
-                            if (newLeft < imageBounds.left) {
-                                val diff = imageBounds.left - newLeft
-                                newLeft += diff; newRight += diff
-                            }
-                            if (newTop < imageBounds.top) {
-                                val diff = imageBounds.top - newTop
-                                newTop += diff; newBottom += diff
-                            }
-                            if (newRight > imageBounds.right) {
-                                val diff = imageBounds.right - newRight
-                                newRight += diff; newLeft += diff
-                            }
-                            if (newBottom > imageBounds.bottom) {
-                                val diff = imageBounds.bottom - newBottom
-                                newBottom += diff; newTop += diff
-                            }
-                        } else {
-                            // Resizing - clamp edges
-                            newLeft = newLeft.coerceIn(imageBounds.left, newRight - 50f)
-                            newRight = newRight.coerceIn(newLeft + 50f, imageBounds.right)
-                            newTop = newTop.coerceIn(imageBounds.top, newBottom - 50f)
-                            newBottom = newBottom.coerceIn(newTop + 50f, imageBounds.bottom)
-                            
-                            // Apply Aspect Ratio if set
-                            if (aspectRatio != null) {
-                                // This is tricky during free drag. 
-                                // Simple approach: Adjust the non-dominant axis or the one we are not dragging?
-                                // If dragging BR corner, width drives height or vice versa?
-                                // Let's just say width drives height for BR/TR/BL/TL logic simplification
-                                val currentW = newRight - newLeft
-                                val currentH = newBottom - newTop
-                                
-                                if (distBR < threshold || distTR < threshold) {
-                                     // Right side moving, adjust height? Or adjust width to match height?
-                                     // Let's enforce ratio on Width
-                                     val targetH = currentW / aspectRatio
-                                     if (distBR < threshold) newBottom = newTop + targetH
-                                     else newTop = newBottom - targetH
-                                } else {
-                                     // Left side moving
-                                     val targetH = currentW / aspectRatio
-                                     if (distBL < threshold) newBottom = newTop + targetH
-                                     else newTop = newBottom - targetH
-                                }
-                            }
+
+                        // Constraints
+                        newLeft = newLeft.coerceIn(imageBounds.left, newRight - 50f)
+                        newTop = newTop.coerceIn(imageBounds.top, newBottom - 50f)
+                        newRight = newRight.coerceIn(newLeft + 50f, imageBounds.right)
+                        newBottom = newBottom.coerceIn(newTop + 50f, imageBounds.bottom)
+
+                        var newRect = Rect(newLeft, newTop, newRight, newBottom)
+                        if (aspectRatio != null) {
+                            newRect = fitAspectRatio(newRect, imageBounds, aspectRatio)
                         }
-                        
-                        onRectChange(Rect(newLeft, newTop, newRight, newBottom))
+                        onRectChange(newRect)
                     }
                 )
             }
     ) {
-        // Draw Scrim (darkened area outside)
-        // We use a Path to subtract the rect from the canvas size
-        val canvasWidth = size.width
-        val canvasHeight = size.height
-        
-        // Draw semi-transparent background everywhere
-        drawRect(Color.Black.copy(alpha = 0.5f))
-        
-        // Clear the crop area (BlendMode.Clear doesn't work well on top of a black background in Box, 
-        // better to draw 4 rects around the crop area or use clipPath)
-        // Since we are drawing ON TOP of the image, we want the image to show through.
-        // Actually, BlendMode.Clear works if we are in a separate layer, but here we are just drawing colors.
-        // The easiest way to achieve "Hole" is to draw 4 darkened rectangles around the center one.
-        
-        // Top
-        drawRect(
-            color = Color.Black.copy(alpha = 0.5f),
-            topLeft = Offset(0f, 0f),
-            size = Size(canvasWidth, rect.top)
-        )
-        // Bottom
-        drawRect(
-            color = Color.Black.copy(alpha = 0.5f),
-            topLeft = Offset(0f, rect.bottom),
-            size = Size(canvasWidth, canvasHeight - rect.bottom)
-        )
-        // Left
-        drawRect(
-            color = Color.Black.copy(alpha = 0.5f),
-            topLeft = Offset(0f, rect.top),
-            size = Size(rect.left, rect.height)
-        )
-        // Right
-        drawRect(
-            color = Color.Black.copy(alpha = 0.5f),
-            topLeft = Offset(rect.right, rect.top),
-            size = Size(canvasWidth - rect.right, rect.height)
-        )
-        
-        // Draw Border
+        // Draw dimmed background outside crop rect
+        val path = Path().apply {
+            addRect(Rect(0f, 0f, size.width, size.height))
+            addRect(rect)
+            fillType = Path.FillType.EvenOdd
+        }
+        drawPath(path, Color.Black.copy(alpha = 0.5f))
+
+        // Draw crop rect border
         drawRect(
             color = Color.White,
             topLeft = rect.topLeft,
             size = rect.size,
             style = Stroke(width = 2.dp.toPx())
         )
+
+        // Draw corners
+        val cornerSize = 20.dp.toPx()
+        val cornerStroke = 4.dp.toPx()
         
-        // Draw Grid (Rule of Thirds)
-        val thirdW = rect.width / 3
-        val thirdH = rect.height / 3
+        // Top Left
+        drawLine(Color.White, rect.topLeft, rect.topLeft + Offset(cornerSize, 0f), cornerStroke)
+        drawLine(Color.White, rect.topLeft, rect.topLeft + Offset(0f, cornerSize), cornerStroke)
         
-        drawLine(Color.White.copy(alpha = 0.5f), Offset(rect.left + thirdW, rect.top), Offset(rect.left + thirdW, rect.bottom))
-        drawLine(Color.White.copy(alpha = 0.5f), Offset(rect.right - thirdW, rect.top), Offset(rect.right - thirdW, rect.bottom))
-        drawLine(Color.White.copy(alpha = 0.5f), Offset(rect.left, rect.top + thirdH), Offset(rect.right, rect.top + thirdH))
-        drawLine(Color.White.copy(alpha = 0.5f), Offset(rect.left, rect.bottom - thirdH), Offset(rect.right, rect.bottom - thirdH))
+        // Top Right
+        drawLine(Color.White, rect.topRight, rect.topRight - Offset(cornerSize, 0f), cornerStroke)
+        drawLine(Color.White, rect.topRight, rect.topRight + Offset(0f, cornerSize), cornerStroke)
         
-        // Draw Corner Handles
-        val cornerSize = 20f
-        val thick = 4.dp.toPx()
+        // Bottom Left
+        drawLine(Color.White, rect.bottomLeft, rect.bottomLeft + Offset(cornerSize, 0f), cornerStroke)
+        drawLine(Color.White, rect.bottomLeft, rect.bottomLeft - Offset(0f, cornerSize), cornerStroke)
         
-        // TL
-        drawLine(Color.White, rect.topLeft, rect.topLeft + Offset(cornerSize, 0f), thick)
-        drawLine(Color.White, rect.topLeft, rect.topLeft + Offset(0f, cornerSize), thick)
-        // TR
-        drawLine(Color.White, rect.topRight, rect.topRight - Offset(cornerSize, 0f), thick)
-        drawLine(Color.White, rect.topRight, rect.topRight + Offset(0f, cornerSize), thick)
-        // BL
-        drawLine(Color.White, rect.bottomLeft, rect.bottomLeft + Offset(cornerSize, 0f), thick)
-        drawLine(Color.White, rect.bottomLeft, rect.bottomLeft - Offset(0f, cornerSize), thick)
-        // BR
-        drawLine(Color.White, rect.bottomRight, rect.bottomRight - Offset(cornerSize, 0f), thick)
-        drawLine(Color.White, rect.bottomRight, rect.bottomRight - Offset(0f, cornerSize), thick)
+        // Bottom Right
+        drawLine(Color.White, rect.bottomRight, rect.bottomRight - Offset(cornerSize, 0f), cornerStroke)
+        drawLine(Color.White, rect.bottomRight, rect.bottomRight - Offset(0f, cornerSize), cornerStroke)
     }
+}
+
+fun fitAspectRatio(currentRect: Rect, bounds: Rect, ratio: Float): Rect {
+    var w = currentRect.width
+    var h = w / ratio
+    
+    // If height exceeds bounds, scale down
+    if (h > bounds.height) {
+        h = bounds.height
+        w = h * ratio
+    }
+    // If width exceeds bounds (after adjustment), scale down again
+    if (w > bounds.width) {
+        w = bounds.width
+        h = w / ratio
+    }
+    
+    val center = currentRect.center
+    val halfW = w / 2
+    val halfH = h / 2
+    
+    var newLeft = center.x - halfW
+    var newTop = center.y - halfH
+    var newRight = center.x + halfW
+    var newBottom = center.y + halfH
+    
+    // Shift if out of bounds
+    if (newLeft < bounds.left) {
+        val diff = bounds.left - newLeft
+        newLeft += diff
+        newRight += diff
+    }
+    if (newTop < bounds.top) {
+        val diff = bounds.top - newTop
+        newTop += diff
+        newBottom += diff
+    }
+    if (newRight > bounds.right) {
+        val diff = newRight - bounds.right
+        newLeft += diff
+        newRight += diff
+    }
+    if (newBottom > bounds.bottom) {
+        val diff = newBottom - bounds.bottom
+        newTop += diff
+        newBottom += diff
+    }
+    
+    return Rect(newLeft, newTop, newRight, newBottom)
 }
